@@ -1,0 +1,18 @@
+ai-playbooks
+Copyright (c) 2026 Tom Mayer / DBTR.digital
+
+Dieses Repository steht unter zwei Lizenzen:
+
+1. Texte und Anleitungen (alle Markdown-Dateien, insbesondere die Kapitel):
+   Creative Commons Namensnennung 4.0 International (CC BY 4.0), siehe LICENSE.
+   https://creativecommons.org/licenses/by/4.0/deed.de
+
+   Namensnennung bei Weitergabe, z. B.:
+   „ai-playbooks von Tom Mayer / DBTR.digital, CC BY 4.0,
+    https://github.com/dbtr-digital/ai-playbooks“ (plus Hinweis, falls verändert)
+
+2. Programmcode (Verzeichnis scripts/ und .github/):
+   MIT-Lizenz, siehe LICENSE-CODE.
+
+Wer eine Anleitung nur einer KI gibt, um damit eigene Systeme aufzubauen, muss
+nichts nennen. Die Namensnennung gilt für die Weitergabe des Materials.
