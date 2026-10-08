@@ -341,6 +341,27 @@ ein Weg. Es sollten **mindestens zwei wirklich unabhängige Wege** sein.
   die WAF-Sperrliste ihn nicht mitsperren. **Beides testen**, mit einer absichtlich
   gesperrten Test-IP.
 
+**Wenn der Notweg ein Browser oder ein Telefon sein muss:** Ein Browser schickt keinen
+eigenen Header mit. Wer sich im Ernstfall vom Telefon aus freischalten will, braucht eine
+reine URL, und dann steht das Geheimnis zwangsläufig im Pfad. Drei Dinge werden dann Pflicht:
+- **Zeitbasierter Code als letzter Pfadteil** (TOTP). Ein abgeflossener Pfad allein
+  öffnet nichts, ein abgeflossener Code ist nach Sekunden wertlos.
+- **Eine globale Bremse, keine je IP.** Gezählt wird nur „richtiger Pfad, falscher Code“:
+  Den Pfad kennt sonst niemand, ein solcher Fehlversuch ist also ein Leck-Signal (oder ein
+  Vertipper). Ab dem zweiten Fehlversuch setzt der Dienst die Codeprüfung **für alle
+  Absender** aus, mit wachsender Pause (z. B. 30 s, jeweils verdoppelt, nach oben
+  gedeckelt), und antwortet dabei genauso wie sonst. Eine Bremse je IP reicht nicht: Ein
+  Angreifer mit vielen Adressen skaliert sonst einfach in die Breite. Bei 30-Sekunden-Codes
+  bleiben ihm nach wenigen Fehlschlägen nur noch eine Handvoll Versuche am Tag. Falsche
+  Pfade dürfen den Zähler **nicht** treiben, sonst kann jeder Fremde den Dienst durch Raten
+  blockieren. Alarm ab dem zweiten Fehlversuch; zurück auf null durch Erfolg, eine
+  Ruhezeit oder eine Rotation des Pfads (der Zustand trägt dafür einen Fingerabdruck des
+  Pfad-Geheimnisses). **Preis:** Wer den Pfad kennt, kann auch den Eigentümer bremsen.
+  Dagegen helfen der Alarm, die Rotation und ein zweiter Rückweg ohne diesen Dienst.
+- **Logs prüfen:** Der Reverse-Proxy schreibt den Pfad in sein Zugriffsprotokoll. Nach dem
+  Einrichten einmal nachsehen, wo er auftaucht, das Protokoll mit kurzer Aufbewahrung
+  rotieren und den Pfad rotieren, falls er lange in einem unrotierten Protokoll lag.
+
 Alles landet in `docs/notfall/ausgesperrt.md`, **sortiert nach Eskalationsstufe**, nicht
 nach Thema. Wer ausgesperrt ist, liest keine lange Übersicht.
 
@@ -503,6 +524,34 @@ Der Monitor prüft **jeden Eintrag dieser Liste** (`docker inspect <name>`), nic
 Container, die er zufällig vorfindet. Fehlt ein erwarteter Container, ist das ein Alarm.
 Umgekehrt meldet er **unerwartete** Container als Hinweis: Was läuft, ohne in der Liste
 zu stehen, ist entweder vergessen oder nicht von dir.
+
+**Zwei Fallen bei den Endpunkten:** Ein Reverse-Proxy antwortet für einen Host, hinter dem
+kein Dienst mehr läuft, oft mit **404** (andere Proxys mit 502). Wer nur „kein 5xx“ prüft,
+hält einen verschwundenen Dienst also je nach Proxy für gesund. Und eine Wurzel-URL, die
+schon im Normalbetrieb 404 liefert, beweist nur, dass der Proxy lebt. Richtig ist der Pfad,
+den auch der Healthcheck des Dienstes nutzt, mit erwartetem Code.
+
+**Geplante Unterbrechungen:** Manche Jobs halten Dienste absichtlich an, etwa eine
+Sicherung, die Container für einen konsistenten Stand stoppt, ein Deploy oder ein Neustart.
+Feste Uhrzeiten taugen dafür nicht: Zeitpläne haben oft eine Zufallsverzögerung, und
+Laufzeiten schwanken. Besser öffnet der Job selbst ein **Wartungsfenster** und schließt es
+wieder:
+
+```bash
+monitor-wartung start <name> <minuten> '<muster auf die Prüflinge>'
+monitor-wartung ende  <name>
+```
+
+Angebunden über einen Start- und Stopp-Haken des Dienstes (z. B. `ExecStartPre` und
+`ExecStopPost` bei systemd; Letzteres läuft auch, wenn der Job scheitert). Regeln dafür:
+- Nur die **genannten** Prüflinge sind betroffen; alles andere meldet weiter.
+- Statt eines Pushs eine Protokollzeile, und es wird **kein** Alarmzustand gespeichert.
+  Ist nach dem Fenster noch etwas kaputt, meldet der nächste Lauf es ganz normal.
+- **Höchstdauer**: Ein Fenster ohne „ende“ läuft von selbst aus und wird mit
+  Protokollzeile weggeräumt. Ein abgestürzter Job darf die Überwachung nicht stilllegen.
+- **Sicherheitsmeldungen** (fremde Anmeldung, Sperr-Spitzen) werden nie unterdrückt.
+- Ein Fenster gilt nur für den lokalen Monitor. Prüft ein anderer Host oder ein externer
+  Dienst denselben Endpunkt, meldet der weiter; solche Endpunkte dort nicht doppelt prüfen.
 
 **Zustandslogik:**
 - Je Prüfling getrennt gespeichert: **Erkennungszustand** (OK/ALERT, seit wann) und
@@ -671,6 +720,31 @@ Lösch- oder Schreibrechte auf genau diese Objekte. Die Kombination aus Werkzeug
 Speicher, Versionierung und Aufbewahrungssperre wird vor dem produktiven Einsatz auf
 Sicherung, Wiederherstellung **und** Wartung geprüft.
 
+**Eine einfache Bauweise ohne Deduplizierung**, wenn das Werkzeug mit der Sperre nicht
+zusammenpasst (ein Werkzeug, das zum Aufräumen alte Daten löschen muss, beißt sich mit
+einer Sperre, die genau das verhindert):
+- Der Server verschlüsselt den täglichen Dump **mit einem öffentlichen Schlüssel** (z. B.
+  `age`). Den privaten Schlüssel hat nur der Mensch. Ein übernommener Server kann seine
+  eigenen Sicherungen dann weder lesen noch zerstören.
+- Hochgeladen wird als einzelne Datei mit dem Datum im Namen
+  (`daily/<host>/<bestand>/<datum>/…`), **höchstens eine je Bestand und Tag**. Liegt für
+  heute schon eine, wird nichts hochgeladen.
+- Die Sperre gilt für das Präfix `daily/` (z. B. drei Wochen, auch gegen Überschreiben);
+  eine Lebenszyklus-Regel löscht danach. Der Server löscht nie selbst.
+- **Deploy- und Handsicherungen bleiben lokal.** Sonst erzeugen zwanzig Deploys an einem
+  Tag zwanzig gesperrte Sätze, die niemand vor Fristende loswird.
+- Ohne Deduplizierung wächst der Speicher linear mit Größe × Aufbewahrung. Die Kosten
+  gegen die Freigrenze des Anbieters rechnen und im Wochencheck prüfen. Große, kaum
+  wertvolle Anteile (z. B. Anhänge mit Original anderswo) lieber getrennt behandeln.
+- **Die Sperre beweisen**, bevor man sich darauf verlässt: mit dem Schlüssel des Servers
+  ein hochgeladenes Objekt löschen und überschreiben wollen (muss scheitern), und als
+  Gegenprobe in einem ungesperrten Präfix (muss gehen).
+- Zwei Fallen aus der Praxis: Der Endpunkt eines frisch aktivierten Objektspeichers kann
+  einige Minuten lang am TLS-Handshake scheitern, bevor sein Zertifikat steht. Und ältere
+  `curl`-Versionen signieren S3-Anfragen erst richtig, wenn der Kopf
+  `x-amz-content-sha256` ausdrücklich gesetzt und `/` in Abfrageparametern als `%2F`
+  kodiert ist. Sonst wird zum Beispiel „heute schon vorhanden“ nicht erkannt.
+
 Datenbanken vorher als konsistenter Dump sichern, nicht die laufenden Dateien. Der
 Backup-Schlüssel liegt im Passwort-Manager, nicht nur auf dem Server. Ein Restore-Skript
 im Repo stellt einen Dienst auf einer leeren Maschine her und wird quartalsweise
@@ -696,6 +770,10 @@ umleiten, geplante Aufgaben vor dem Start deaktivieren.
   meldet der Monitor das als Alarm, nicht nur der Wochenbericht.
 - Automatische Sicherheits-Updates der Distribution (z. B. `unattended-upgrades`) sind
   eine sinnvolle Grundlage; Reboots bleiben bewusst manuell, mit Erinnerung.
+- **Kriterium ist das Support-Ende, nicht die Versionsnummer.** Dass es eine neuere
+  Hauptversion gibt, ist ein Hinweis; ein Alarm entsteht erst, wenn das Ende der
+  Sicherheitsupdates näher als etwa sechs Monate rückt, oder wenn die laufende Version
+  in der Prüfung gar nicht bekannt ist. Ein Dauer-Alarm „neue Version verfügbar“ stumpft ab.
 - Jedes Update folgt Abschnitt 3 (Plan, Pilot, Funktionstest, Rückweg).
 
 ### Aufräumen
