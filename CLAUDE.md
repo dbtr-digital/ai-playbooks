@@ -67,7 +67,8 @@ nicht mehr.
 
 **Auch die Commit-Metadaten sind öffentlich.** Autor und Committer stehen im Commit, und der
 Namens-Scan prüft sie nicht. Commits hier laufen unter einer neutralen Identität, nie unter
-einer persönlichen Adresse: `git -c user.name=Claude -c user.email=noreply@anthropic.com commit …`.
+einer persönlichen Adresse — dieselbe wie im ersten Commit (`git log --reverse --format='%an <%ae>' | head -1`),
+übergeben mit `git -c user.name=<name> -c user.email=<neutrale-adresse> commit …`.
 Vor dem Push prüfen: `git log -1 --format='%an <%ae> | %cn <%ce>'`.
 
 ## Konventionen
