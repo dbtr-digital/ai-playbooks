@@ -1,0 +1,5 @@
+# Lokales, nie veröffentlichen
+.env
+.env.*
+*.local
+.DS_Store

@@ -25,6 +25,7 @@ Zugänge und Tokens anlegen), und übernimmt den Rest.
 | Kapitel | Wofür |
 |---|---|
 | [Server-Betrieb](server-betrieb/README.md) | Eigene Server absichern und dauerhaft betreiben: Bestandsaufnahme und Schutzbedarf, Kontoschutz, getestete Backups und Rückwege, SSH- und Container-Härtung, externe und lokale Überwachung mit Push-Alarmen, Audits, Update-Prozess, Einbruchs-Notfall; optional SSH-Gate, Sperren und CDN-Honeypots |
+| [KI-Sitzungen koordinieren](ki-sitzungen-koordinieren/README.md) | Mehrere KI-Sitzungen, mehrere Werkzeuge und viele Repositories auf einem Rechner: ein Kanon der Regeln mit Ausrollzielen, drei Wächter-Hooks (Sammel-Stagen, Löschen mit leerer Variable, Signale per Muster), ein erzeugter Steckbrief je Projekt, offener Bestand mit IDs und Rückmeldeschlitzen, ein Rückkanal zwischen den Repositories, Regeln für parallele Sitzungen und den Sitzungsabschluss, ein wöchentlicher Konformitäts-Check |
 
 *Weitere Kapitel folgen.*
 
