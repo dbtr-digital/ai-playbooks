@@ -56,7 +56,7 @@ Fehler gefunden oder eine Verbesserung? Gern als Issue oder Pull Request.
 
 - **Texte und Anleitungen:** [CC BY 4.0](LICENSE). Frei nutzbar und veränderbar, auch
   kommerziell, bei Nennung der Quelle, wenn du das Material weitergibst.
-- **Skripte** (`scripts/`, `.github/`) und die Codeblöcke in den Kapiteln: [MIT](LICENSE-CODE).
+- **Skripte** (`scripts/`, `.github/`): [MIT](LICENSE-CODE).
 
 Rechteinhaber und Vorschlag für die Namensnennung: [`NOTICE`](NOTICE). Wer eine Anleitung
 nur seiner KI gibt, um damit eigene Systeme aufzubauen, muss nichts nennen.
