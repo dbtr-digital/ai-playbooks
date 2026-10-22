@@ -1,6 +1,6 @@
 ---
-stand: 2026-09-29
-fassung: 4
+stand: 2026-10-22
+fassung: 5
 ---
 
 # Bauanleitung: Server-Sicherheit und -Betrieb mit einer KI aufbauen
@@ -615,6 +615,118 @@ Audits **ändern nichts.** Sie lesen, vergleichen und berichten.
 | `managed-audit` | Managed Hosting | Webshell-Muster, weltweit beschreibbare Dateien, Platz je Website |
 | `secret-age` | Geheimnisse zu alt? | Alter der Tokens und Schlüssel, Geräte mit veralteter Kopie |
 
+### Sicherheitsmeldungen fortlaufend bewerten
+
+Der Versions-Audit beantwortet, welche Software installiert und ob sie aktuell bzw.
+unterstuetzt ist. Er wird um einen **serverseitigen Meldungseingang mit Fallbearbeitung**
+ergaenzt. Der Dienst muss auch bei ausgeschaltetem Arbeitsrechner funktionieren.
+Ein RSS-Leser allein ist noch kein Schwachstellenmanagement.
+
+**Quellen:** Je eingesetzter Technologie zuerst Hersteller-Advisories, Distributions-
+Security-Tracker und offizielle Repository-Advisories. CERT-/Behoerdenmeldungen,
+redaktionelle Sicherheitsdienste und der CISA-KEV-Katalog dienen als Ergaenzung.
+Kein einzelner Aggregator garantiert vollstaendige Abdeckung. Ein allgemeiner Blog
+ist kein Ersatz fuer den Sicherheitskanal. Pruefe beim Einrichten anhand einer
+bekannten aktuellen Warnung, dass ihr Inhalt wirklich importiert wird.
+
+**Takt:** Beispielsweise Feeds alle 15 Minuten, grosse Kataloge stuendlich. Das ist
+zeitnahes Polling, keine garantierte Echtzeit. Veroeffentlichungsverzug, begrenzte
+Feedfenster und veraltetes Inventar bleiben sichtbar. Nach Deploys wird der Bestand
+sofort erneuert; ansonsten regelmaessig. Die Wochenpruefung kontrolliert weiterhin
+Versionen, Abdeckung, offene Entscheidungen und Fristeinhaltung.
+
+**Kleine Betriebsform:** Ein unprivilegierter, zeitlich begrenzter Python-Oneshot mit
+HTTP-Client, Feedparser und SQLite genuegt fuer einen kleinen Bestand. Ein systemd-
+Timer startet ihn. Ein gesonderter privilegierter Inventarleser fuehrt ausschliesslich
+feste lesende Befehle aus. Der internetlesende Sammler bekommt keinen Docker-Socket.
+Keine neue Weboberflaeche oder KI ist fuer den Abruf erforderlich. Eine bestehende,
+gepflegte Plattform ist ebenfalls geeignet; entscheidend sind die folgenden Funktionen.
+
+Plane feste Grenzen fuer Speicher, CPU, Laufzeit, Antwortgroesse und Pagination ein.
+Ein moeglicher Startwert fuer einen kleinen Sammler ist 256 MiB und wenige Minuten
+Laufzeit; **vor Produktivbetrieb mit dem echten Bestand messen**. Erstimport und
+normaler Lauf getrennt messen. Wachstum der Datenbank ueberwachen. SBOM-Auswertung
+oder grosse Kataloge brauchen gegebenenfalls eine andere Dimensionierung.
+
+#### Quellenbetrieb nachweisen
+
+Je Quelle muessen letzter Versuch, letzter erfolgreicher Abruf, Ergebnis, HTTP-Code,
+Fehlerzaehler, Eintragszahlen und Abdeckung sichtbar sein. Je Versuch ausserdem
+Start/Ende, Dauer, Datenmenge, neue/geaenderte Eintraege und Fehler protokollieren.
+
+- 304 gilt nur nach gueltigem Erstimport als erfolgreicher Cache-Abruf.
+- Fehler verschieben nicht den letzten Erfolg. Abgebrochene Laeufe werden erkannt.
+- Unvollstaendige Pagination, Groessen-/Zeitlimits und Parsingfehler sind Fehler,
+  keine erfolgreichen Teilimporte. Cachezustand erst nach vollstaendigem Import speichern.
+- Bei RSS ohne Ueberschneidung zum letzten Zeitfenster eine moegliche Luecke melden.
+- Ein leerer Advisory-Kanal oder HTTP 200 beweist keine Schwachstellenfreiheit.
+- Ein separater Waechter prueft Lebenszeichen, Quellenfrische, Inventaralter und
+  Zustellwarteschlange. Ein fehlgeschlagener Alarmversand wird wiederholt.
+- Geheimnisse nicht protokollieren. Abruflogs befristet aufbewahren; Entscheidungen
+  samt Nachweisen nach einer eigenen Aufbewahrungsregel sichern.
+
+#### Vom Hinweis zum verifizierten Abschluss
+
+Trenne Artikel, Meldung und **Fall je Meldung und Komponente**. Mehrere Quellen
+koennen dieselbe CVE beschreiben; dieselbe CVE kann mehrere Dienste betreffen.
+Eine hohe Fallzahl ist deshalb weder die Anzahl verschiedener Schwachstellen noch
+die Anzahl erforderlicher Updates.
+
+Jeder Fall braucht mindestens:
+
+| Gegenstand | Felder / Bedeutung |
+|---|---|
+| Zuordnung | Quelle, CVE/Advisory-ID, Asset, laufende Version und Image-Digest, Inventarzeit |
+| Bewertung | ungeprueft / relevant / nicht relevant / unklar; davon getrennt bestaetigte oder moegliche Betroffenheit |
+| Bearbeitung | Prioritaet, Owner, Frist, naechste Massnahme, gegebenenfalls Ticket und Wiedervorlage |
+| Zustand | neu, in Pruefung, geplant, in Bearbeitung, wartet, behoben, abgeschlossen |
+| Zeitpunkte | geprueft, begonnen, bearbeitet, behoben, verifiziert, abgeschlossen |
+| Nachweis | Begruendung, Originalquelle, Massnahme, Live-Verifikation, Pruefer |
+| Ausnahme | Wartegrund oder ausdrueckliche Risikoakzeptanz mit Ablaufdatum |
+
+Herstellerbereiche und Distributions-Backports pruefen. Eine alte Upstream-Nummer
+kann bereits gepatcht sein; ein aktuelles Hostpaket repariert keine Container-
+Bibliothek. Eingebettete Go-Runtimes, Betriebssystempakete und Zertifikatsspeicher
+gehoeren in die Bewertung. Aktuelle Paketabwesenheit schliesst eine fruehere
+Ausfuehrung kompromittierter Buildabhaengigkeiten nicht aus.
+
+**Schliessen nur mit Beleg:** „Behoben“ verlangt eine konkrete Massnahme und eine
+Pruefung des laufenden Systems. „Nicht betroffen“ verlangt einen nachvollziehbaren
+Ausschluss. Unbekanntes bleibt offen. Ein neues Image im Registry reicht nicht.
+Nach Bibliotheksupdates auch noch laufende Prozesse pruefen. Zertifikatsspeicher von
+System, Laufzeit und Anwendung getrennt erfassen.
+
+Automatische Vorschlaege duerfen menschliche Bewertungen nicht ueberschreiben.
+Aendern sich Meldung, Version, Image-Digest oder die Gueltigkeit eines Nachweises,
+wird erneut geprueft. Aenderungen bleiben mit Akteur, Zeitpunkt und Begruendung in
+der Historie. Stapelbearbeitung braucht explizite IDs, Schutz gegen veraltete
+Entscheidungen, Dry-run und atomare Uebernahme; kein pauschales Leeren der Liste.
+
+#### Rolle des Wochenreviews und Abnahme
+
+Der Weekly prueft sowohl **neue Meldungen ohne Zuordnung** als auch relevante,
+ungeklaerte, ueberfaellige und erneut geoeffnete Faelle. Ausserdem Quellenfehler,
+fehlende Produktquellen, Inventaralter und Alarmzustellung. Eine Woche ohne neue
+Artikel ist nur bei nachgewiesener Quellenabdeckung ein unauffaelliger Befund.
+Akute Meldungen werden vorher bearbeitet, nicht bis zum Wochenlauf gesammelt.
+
+Pruefe den Aufbau mit: gueltigem Import, 304, fehlerhafter Quelle, unterbrochener
+Pagination, geaenderter Meldung, geaendertem Image, veraltetem Inventar, ausgefallenem
+Alarmweg und wiederhergestellter Datenbank. Fuer einen Fix muessen Version/Digest,
+Funktionsprobe, Zeitpunkt und Rueckweg vom laufenden Dienst belegt sein.
+
+**Einordnung:** Dieser Kreislauf entspricht der Richtung von
+[NIST SP 800-40r4](https://csrc.nist.gov/pubs/sp/800/40/r4/final) und
+[CIS Control 7](https://www.cisecurity.org/controls/continuous-vulnerability-management).
+Feeds ersetzen keine Komponenten- und Schwachstellenpruefung. Fuer den Ausbau
+SBOMs pro Release/Image-Digest, etablierte Scanner und maschinenlesbare Bewertungen
+nutzen, etwa ueber [OWASP Dependency-Track](https://docs.dependencytrack.org/).
+[KEV](https://github.com/cisagov/kev-data), Exposition und betriebliche Auswirkung
+helfen beim Priorisieren; [EPSS](https://www.first.org/epss/) ergaenzt die Prognose.
+Ein niedriger Prognosewert widerlegt keine belegte Ausnutzung. „State of the Art“
+ist kein Produktetikett, sondern muss durch Abdeckung, Bearbeitung und Nachweise
+im eigenen Betrieb getragen werden.
+
 ### Einheitliche Ergebniscodes
 
 Ein Lauf kann gleichzeitig einen Fund haben **und** einen Server nicht erreichen. Deshalb
@@ -776,7 +888,24 @@ umleiten, geplante Aufgaben vor dem Start deaktivieren.
   in der Prüfung gar nicht bekannt ist. Ein Dauer-Alarm „neue Version verfügbar“ stumpft ab.
 - Jedes Update folgt Abschnitt 3 (Plan, Pilot, Funktionstest, Rückweg).
 
+### Gemeinsame Versionsstaende
+
+Verwende eine gepruefte Sollversion mit Digest **je unterstuetzter Versionslinie**.
+Gleiche Dienste sollen nach einem gestuften Rollout denselben Sicherheitspatch
+verwenden. Fuehre Produkt, Linie, Sollstand, Freigabedatum, Owner, Support-Ende und
+befristete Ausnahmen zentral; CI prueft die Buildpins, das Inventar den Live-Stand.
+Eine Hauptversionsmigration bleibt ein eigener Kompatibilitaets-/Migrationsauftrag.
+Systemlaufzeiten bleiben distributionsverwaltet. Gepinnte Images muessen regelmaessig
+neu bewertet und erneuert werden: Reproduzierbarkeit allein haelt sie nicht aktuell.
+
 ### Aufräumen
+
+Jeder Release-, Build- und Testlauf raeumt nach Erfolg seine eigenen Reste auf
+**CI-Runner, Server und lokalem Rechner** weg. Artefakte je Lauf eindeutig kennzeichnen;
+behalten werden laufender Stand und ein gepruefter Rueckweg. Keine hostweiten
+Prune-Befehle, keine fremden Namensraeume. CI-Cleanup auch bei Fehlschlag ausfuehren;
+Aufraeumfunktionen gegen Testkonfiguration und Testlauf getrennt sperren. Im Betrieb
+festhalten, welcher Pfad wem gehoert und nach welcher Regel er bereinigt wird.
 
 - Standard ist **Probelauf**: zeigt, was frei würde; erst nach Sichtung ausführen.
 - Nie App-Daten, Volumes oder Datenbanken anfassen.
@@ -784,7 +913,7 @@ umleiten, geplante Aufgaben vor dem Start deaktivieren.
   - **Freigegebene Aufbewahrungsregeln** laufen automatisch: Log-Rotation,
     Journal-Obergrenze (großzügig, damit Vorfallanalysen möglich bleiben), alte
     Container-Images nach Alter. Sie werden einmal festgelegt und dokumentiert.
-  - **Zusätzliches Löschen während einer Sitzung** braucht immer eine Freigabe. Statt
+  - **Zusaetzliches Loeschen vorbestehender Daten waehrend einer Sitzung** braucht eine Freigabe. Eigene temporaere Artefakte werden nach der beschriebenen Regel entfernt. Statt
     löschen lieber markieren, verschieben, deaktivieren, vorher sichern.
 
 ---
@@ -948,6 +1077,7 @@ Nutzer ab.
 | P6 | Fehlender Container wird gemeldet | Einen `dauerhaft`-Container aus dem Sollbestand stoppen und entfernen (Testdienst) | Alarm „fehlt“; nach Wiederherstellen Entwarnung |
 | P7 | Falsche Antwort wird gemeldet | Einen Testendpunkt auf 404 umbiegen | Alarm, obwohl kein 5xx |
 | P8 | Backup lässt sich wiederherstellen | Restore-Skript auf leerer Maschine | Dienst läuft mit Daten vom erwarteten Stand; Dauer notiert |
+| P8a | Sicherheitsmeldungen werden bearbeitet | Quelle absichtlich fehlschlagen lassen, Inventar veralten lassen, Meldung aendern und einen Fall mit echter Live-Verifikation abschliessen | Quellenfehler, Wiederpruefung und Abschlussnachweis erscheinen im Wochenreview |
 | P9 | Lösch- und Manipulationsschutz | **Ausschließlich** mit eigens angelegten, entbehrlichen Testdaten in einem getrennten Test-Repository bzw. -Bucket, dessen Schutzregeln und Client-Berechtigungen nachweislich der Produktion entsprechen. Vom Server aus Löschen und Überschreiben versuchen. **Produktive Sicherungen werden nicht angefasst** | Der geschützte Stand bleibt mit dem dokumentierten Verfahren wiederherstellbar. Erfolgskontrolle je nach Werkzeug (Borg: früherer Repository-Zustand; Object Lock: geschützte Version trotz Löschmarkierung), nicht über den Rückgabewert des Löschbefehls |
 | P10 | Rückwege funktionieren | Eigene Test-IP absichtlich sperren, jeden Rückweg aus 4.3 durchspielen | Über jeden dokumentierten Weg ist **administrativer Zugang wieder möglich**; wo ein Weg die Sperre selbst aufheben soll, ist sie danach aufgehoben |
 | P11 | Sperren treffen die richtige Adresse | Trap-Pfad aufrufen, Log und Sperrliste prüfen | Gesperrt ist die Besucher-IP, nie eine CDN-Adresse |
