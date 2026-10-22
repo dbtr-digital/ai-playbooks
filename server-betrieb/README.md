@@ -702,6 +702,22 @@ wird erneut geprueft. Aenderungen bleiben mit Akteur, Zeitpunkt und Begruendung 
 der Historie. Stapelbearbeitung braucht explizite IDs, Schutz gegen veraltete
 Entscheidungen, Dry-run und atomare Uebernahme; kein pauschales Leeren der Liste.
 
+#### Unsichere externe Dienste ersetzen oder abschalten
+
+Auch SaaS, Managed Hosting, externe APIs und selbst betriebene Herstellerprodukte
+muessen den Sicherheitsstandard erfuellen. Ein professioneller Anbieter oder dessen
+neueste Anwendungsversion allein belegt keine Sicherheit des Unterbaus; belegte
+Distributions-Backports zaehlen dagegen als Patchnachweis.
+
+Fehlt ein sicher betreibbarer Stand oder ein belastbarer Nachweis, bleibt der Fall
+offen: Verantwortlicher, Zwischenmassnahme, Frist und Wiedervorlage. Alternativen
+pruefen und bei ausbleibender Abhilfe Ersatz, Funktionseinschraenkung oder Abschaltung
+vorbereiten, einschliesslich Auswirkungen, Datenexport, Migration und Rueckweg.
+**Ersatz, Abschaltung und bewusstes Weiterbetreiben mit Restrisiko nur nach
+Ruecksprache mit dem Verantwortlichen.** Eine KI darf die Entscheidung vorbereiten,
+aber weder eigenstaendig kuendigen noch das Risiko stillschweigend akzeptieren.
+Der Wochenreview verfolgt auch diese Entscheidungsfristen.
+
 #### Managed Hosting: Verantwortung und Nachweis trennen
 
 Bei Managed Hosting wartet der Provider die vertraglich erfasste Plattform.
