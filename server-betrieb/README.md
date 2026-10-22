@@ -702,6 +702,22 @@ wird erneut geprueft. Aenderungen bleiben mit Akteur, Zeitpunkt und Begruendung 
 der Historie. Stapelbearbeitung braucht explizite IDs, Schutz gegen veraltete
 Entscheidungen, Dry-run und atomare Uebernahme; kein pauschales Leeren der Liste.
 
+#### Managed Hosting: Verantwortung und Nachweis trennen
+
+Bei Managed Hosting wartet der Provider die vertraglich erfasste Plattform.
+Eigene Betriebssystem- oder Panel-Patches sind dort in der Regel weder Aufgabe
+noch Befugnis des Kunden. Anwendungen, Plugins, Konfiguration und die Auswahl
+eines unterstuetzten Laufzeitzweigs koennen trotzdem beim Kunden liegen.
+Diese Grenze anhand der Leistungsbeschreibung festhalten.
+
+Eine ausdrueckliche Provider-Bestaetigung mit betroffener Komponente, konkreter
+Sicherheitsluecke und abgeschlossenem Rollout kann den Fall schliessen. Ein
+Backport muss die sichtbare Versionsnummer nicht aendern. Eine allgemeine
+Wartungszusage belegt dagegen nicht die Behebung jeder historischen Luecke.
+Provider-Massnahme und eigene Anwendungsmassnahme getrennt verfolgen; fehlende
+Panel-Rechte nicht als fehlenden Patch und Professionalitaet nicht als
+pauschalen Abschlussbeleg werten.
+
 #### Rolle des Wochenreviews und Abnahme
 
 Der Weekly prueft sowohl **neue Meldungen ohne Zuordnung** als auch relevante,
