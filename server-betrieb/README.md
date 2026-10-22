@@ -888,15 +888,23 @@ umleiten, geplante Aufgaben vor dem Start deaktivieren.
   in der Prüfung gar nicht bekannt ist. Ein Dauer-Alarm „neue Version verfügbar“ stumpft ab.
 - Jedes Update folgt Abschnitt 3 (Plan, Pilot, Funktionstest, Rückweg).
 
-### Gemeinsame Versionsstaende
+### Aktuellster sicher lauffaehiger Stand fuer alle Anwendungen
 
-Verwende eine gepruefte Sollversion mit Digest **je unterstuetzter Versionslinie**.
-Gleiche Dienste sollen nach einem gestuften Rollout denselben Sicherheitspatch
-verwenden. Fuehre Produkt, Linie, Sollstand, Freigabedatum, Owner, Support-Ende und
-befristete Ausnahmen zentral; CI prueft die Buildpins, das Inventar den Live-Stand.
-Eine Hauptversionsmigration bleibt ein eigener Kompatibilitaets-/Migrationsauftrag.
-Systemlaufzeiten bleiben distributionsverwaltet. Gepinnte Images muessen regelmaessig
-neu bewertet und erneuert werden: Reproduzierbarkeit allein haelt sie nicht aktuell.
+Ziel ist fuer alle Anwendungen der **aktuellste, sicher lauffaehige Stand mit allen
+verfuegbaren Sicherheitskorrekturen**. Das umfasst Laufzeiten, Frameworks,
+Datenbanken, Proxys, Basisimages, Bibliotheken, Zertifikatsspeicher sowie Build-/CI-
+Abhaengigkeiten. Keine feste Hauptversionsnummer ersetzt die laufende Pruefung.
+Herstellerfreigabe und Produktionsreife zaehlen; Vorabversionen werden nicht blind
+uebernommen. Distributions-Backports werden anhand des Herstellerstatus bewertet.
+
+Fuehre Produkt, Live-Stand, neuesten geeigneten Herstellerstand, getesteten Zielstand,
+Digest, Pruefdatum, Owner und befristete Ausnahmen. Der Weekly kontrolliert alle
+Anwendungen; akut erforderliche Sicherheitskorrekturen werden vorher behandelt.
+Gleiche Produkte sollen nach gestuftem Rollout denselben freigegebenen Stand nutzen.
+Kompatibilitaetshindernisse brauchen konkrete Begruendung, Zwischenmassnahme, Frist
+und Wiedervorlage. Eine Hauptversionsmigration braucht Tests und gegebenenfalls eine
+Restore-/Migrationsprobe. Gepinnte Images regelmaessig erneuern: Reproduzierbarkeit
+allein haelt sie nicht aktuell.
 
 ### Aufräumen
 
