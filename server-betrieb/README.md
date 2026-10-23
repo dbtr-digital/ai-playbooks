@@ -1,6 +1,6 @@
 ---
-stand: 2026-10-22
-fassung: 5
+stand: 2026-10-23
+fassung: 6
 ---
 
 # Bauanleitung: Server-Sicherheit und -Betrieb mit einer KI aufbauen
@@ -629,6 +629,13 @@ Kein einzelner Aggregator garantiert vollstaendige Abdeckung. Ein allgemeiner Bl
 ist kein Ersatz fuer den Sicherheitskanal. Pruefe beim Einrichten anhand einer
 bekannten aktuellen Warnung, dass ihr Inhalt wirklich importiert wird.
 
+Strukturierte Hersteller-Schwachstellenkataloge direkt verarbeiten. Beispielsweise
+liefert die [Go Vulnerability Database](https://go.dev/doc/security/vuln/database)
+Modulpfade, betroffene Bereiche und Plattformen. Vollstaendigkeit gegen den
+Originalindex pruefen; fehlende Detaildatensaetze duerfen keinen erfolgreichen
+Teilimport ergeben. Solche Eintraege brauchen weder eine CVE-Nummer noch ein
+bestimmtes Wort im Titel. Ein News-Stichwortfilter darf sie nicht aussortieren.
+
 **Takt:** Beispielsweise Feeds alle 15 Minuten, grosse Kataloge stuendlich. Das ist
 zeitnahes Polling, keine garantierte Echtzeit. Veroeffentlichungsverzug, begrenzte
 Feedfenster und veraltetes Inventar bleiben sichtbar. Nach Deploys wird der Bestand
@@ -689,6 +696,23 @@ kann bereits gepatcht sein; ein aktuelles Hostpaket repariert keine Container-
 Bibliothek. Eingebettete Go-Runtimes, Betriebssystempakete und Zertifikatsspeicher
 gehoeren in die Bewertung. Aktuelle Paketabwesenheit schliesst eine fruehere
 Ausfuehrung kompromittierter Buildabhaengigkeiten nicht aus.
+
+Bei Go auch die Buildinformation und den SHA-256 der tatsaechlich laufenden
+Binary erfassen: eingebettete Laufzeit, Abhaengigkeiten, ersetzte Module und
+Zielplattform. Das erfasst keine ruhenden Werkzeuge oder Bibliotheken ausserhalb
+dieses Formats. Compiler-Meldungen betreffen nicht automatisch jedes damit
+gebaute Programm. Produktversion, Go-Modulversion und Sonderbereiche des
+Herstellers auseinanderhalten; eine unbekannte Buildversion ist kein Fixnachweis.
+
+Ein Scannerfund nach Modulversion ist von einem enthaltenen Paket oder
+nachgewiesenen Aufrufpfad zu unterscheiden. Der offizielle
+[govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck)
+kann Binary-Symbole und Quellcode untersuchen, hat aber Grenzen bei fehlenden
+Symbolinformationen, Reflexion und unsicheren Speicherzugriffen. Sein JSON-Modus
+liefert auch bei Funden Exitcode0. Ergebnisse deshalb strukturiert auswerten,
+mit dem exakten Build verbinden und Ausschluesse begruenden; weder jeden
+Modultreffer als ausnutzbar behaupten noch aus einem grueneren Prozessstatus
+pauschale Entwarnung ableiten.
 
 **Schliessen nur mit Beleg:** „Behoben“ verlangt eine konkrete Massnahme und eine
 Pruefung des laufenden Systems. „Nicht betroffen“ verlangt einen nachvollziehbaren
