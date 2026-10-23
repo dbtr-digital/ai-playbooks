@@ -1,6 +1,6 @@
 ---
 stand: 2026-10-23
-fassung: 6
+fassung: 7
 ---
 
 # Bauanleitung: Server-Sicherheit und -Betrieb mit einer KI aufbauen
@@ -696,6 +696,27 @@ kann bereits gepatcht sein; ein aktuelles Hostpaket repariert keine Container-
 Bibliothek. Eingebettete Go-Runtimes, Betriebssystempakete und Zertifikatsspeicher
 gehoeren in die Bewertung. Aktuelle Paketabwesenheit schliesst eine fruehere
 Ausfuehrung kompromittierter Buildabhaengigkeiten nicht aus.
+
+Auch **transitive, vendorte und bereits gebuendelte Kopien** erfassen: Ein
+Paketmanager-Override aktualisiert keine Bibliothek, die ein Framework als
+fertige JavaScript-Datei mitliefert. Ebenso ersetzt eine neue direkte
+Python-Abhaengigkeit nicht die eigene Kopie im Installer. Pfad, Version und
+gegebenenfalls Datei-Hash je Kopie nachweisen. Ein lesender Manifest-Scanner
+ist kein vollstaendiges SBOM; fehlende Suchwurzeln, nicht untersuchbare Bundles
+und Lesefehler muessen sichtbar bleiben. Unnoetige Installer lassen sich nach
+Funktionspruefung aus fertigen Laufzeitimages entfernen; ihre Build-Umgebung
+bleibt ein eigener Pruefgegenstand.
+
+Wenn ein Herstellerfix nur als Quellcode vorliegt, kann ein gepruefter Backport
+eine Zwischenloesung sein. Originaldatei und Patch exakt pinnen, unbekannte
+Ausgangsstaende ablehnen und den Fix bei jedem Build erzwingen. Ein gezielter
+Negativtest muss am Original scheitern und am korrigierten Stand bestehen;
+positive Funktionsfaelle und die passende Herstellersuite gehoeren dazu.
+Pruefen, dass keine versehentliche Testauswahl wie `describe.only` den Lauf
+verkuerzt. Die Paketversion bleibt wahrheitsgemaess; ein versionsbasierter
+Scanner darf weiterhin anschlagen. Den abweichenden Codezustand mit Belegen
+dokumentieren, statt den Fund pauschal auszublenden. Owner und Wiedervorlage
+fuer den Wechsel auf ein getestetes offizielles Release festlegen.
 
 Bei Go auch die Buildinformation und den SHA-256 der tatsaechlich laufenden
 Binary erfassen: eingebettete Laufzeit, Abhaengigkeiten, ersetzte Module und
