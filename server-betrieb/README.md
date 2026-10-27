@@ -1,6 +1,6 @@
 ---
-stand: 2026-10-23
-fassung: 7
+stand: 2026-10-27
+fassung: 8
 ---
 
 # Bauanleitung: Server-Sicherheit und -Betrieb mit einer KI aufbauen
@@ -803,6 +803,12 @@ helfen beim Priorisieren; [EPSS](https://www.first.org/epss/) ergaenzt die Progn
 Ein niedriger Prognosewert widerlegt keine belegte Ausnutzung. „State of the Art“
 ist kein Produktetikett, sondern muss durch Abdeckung, Bearbeitung und Nachweise
 im eigenen Betrieb getragen werden.
+
+**Ausführlich für kleine Server:** Wie sich dieser Kreislauf ohne Plattform auf Servern
+mit wenigen GB Arbeitsspeicher betreiben lässt (Ressourcen-Gate, Abfragen aus dem eigenen
+Bestand statt Schlagwortfeeds, Selbstanmeldung jedes Systems mit Frist, Zweitprüfung vom
+zweiten Server, Rückkanal in die Projekte), beschreibt das eigenständige Kapitel
+[Schlanke Sicherheitswache](../schlanke-sicherheitswache/README.md).
 
 ### Einheitliche Ergebniscodes
 
