@@ -1,6 +1,6 @@
 ---
 stand: 2026-10-27
-fassung: 1
+fassung: 2
 ---
 
 # Bauanleitung: Eine schlanke Sicherheitswache für kleine Server
@@ -276,6 +276,92 @@ journalctl -k --since -48h | grep 'task_memcg=/system.slice/<wache>'   # OOM-Kil
   kann die Laufzeitgrenze reißen; Fortschritt muss erhalten bleiben, und erst der
   vollständige Abgleich zählt als Erfolg.
 
+### 3.6 Minimal-Datenmodell
+
+Die Regeln der Abschnitte 4 bis 9 hängen an wenigen Feldern. Fehlt eines, lässt sich die
+Regel nicht mehr prüfen, nur noch behaupten. Die Beziehungen:
+
+- **Ein Vorkommen** je System, Herkunft (Anmeldung oder Messung), Paket und Ort; es zeigt auf
+  höchstens eine **Abfrage** je Ökosystem, Name und Version. Private Namen zeigen auf keine.
+- **Ein Fundort** je System, Ökosystem, Name und Ort, **ohne Version**: Ein Update am selben
+  Ort führt denselben Fall weiter und kann ihn per Messung schließen.
+- **Ein Treffer** je Abfrage, Meldung und Quelldatensatz, mit Treffer-Fakten (4.1); **ein Fall**
+  je Meldung und Fundort, mit unveränderlicher Ereignisfolge.
+- Meldungen tragen eine kanonische Kennung (CVE, sonst GHSA oder Quell-ID) und Aliasse. Eine
+  Sammelmeldung mit mehreren CVEs behält ihre eigene Kennung, die CVEs werden nicht verschmolzen.
+
+```sql
+-- Belege: inhaltsadressiert, unveränderlich
+CREATE TABLE payloads(id TEXT PRIMARY KEY, data BLOB NOT NULL);   -- id = SHA-256, ohne Header
+CREATE TABLE responses(id INTEGER PRIMARY KEY, source TEXT NOT NULL, target TEXT NOT NULL,
+  request_hash TEXT NOT NULL, payload_id TEXT NOT NULL REFERENCES payloads,
+  status INTEGER NOT NULL, parser TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL);
+CREATE TABLE advisories(id TEXT PRIMARY KEY, revision INTEGER NOT NULL, modified TEXT,
+  kev INTEGER NOT NULL DEFAULT 0, withdrawn TEXT, payload_id TEXT REFERENCES payloads);
+CREATE TABLE aliases(alias TEXT PRIMARY KEY, advisory_id TEXT NOT NULL REFERENCES advisories);
+-- Systeme
+CREATE TABLE registrations(system_id TEXT PRIMARY KEY,           -- <host>/<dienst>
+  project TEXT NOT NULL, owner TEXT NOT NULL, artifact TEXT NOT NULL, complete INTEGER NOT NULL,
+  observed_at TEXT NOT NULL, hash TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE system_lifecycle(system_id TEXT PRIMARY KEY, state TEXT NOT NULL
+  CHECK(state IN ('active','retired')), actor TEXT NOT NULL, evidence TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE lane_checks(system_id TEXT NOT NULL, lane TEXT NOT NULL,  -- os|npm|pypi|go|runtime
+  at TEXT NOT NULL, result TEXT NOT NULL, PRIMARY KEY(system_id, lane));
+-- Bestand und Abgleich
+CREATE TABLE queries(id TEXT PRIMARY KEY,                        -- SHA-256(ecosystem,name,version)
+  ecosystem TEXT NOT NULL, name TEXT NOT NULL, version TEXT NOT NULL,
+  result TEXT NOT NULL DEFAULT 'offen', last_success TEXT, next_attempt TEXT,
+  known_records TEXT NOT NULL DEFAULT '[]', last_proof TEXT);    -- Antwort-IDs des letzten Erfolgs
+CREATE TABLE software(id TEXT PRIMARY KEY, system_id TEXT NOT NULL,
+  origin TEXT NOT NULL CHECK(origin IN ('anmeldung','messung')), lane TEXT NOT NULL,
+  ecosystem TEXT NOT NULL, name TEXT NOT NULL, version TEXT NOT NULL, location TEXT NOT NULL,
+  visibility TEXT NOT NULL CHECK(visibility IN ('public','private','unknown')),
+  query_id TEXT REFERENCES queries, observed_at TEXT NOT NULL, active INTEGER NOT NULL);
+CREATE TABLE locations(id TEXT PRIMARY KEY,                      -- Hash(system,ecosystem,name,ort)
+  system_id TEXT NOT NULL, ecosystem TEXT NOT NULL, name TEXT NOT NULL, version TEXT NOT NULL,
+  location TEXT NOT NULL, hash TEXT NOT NULL, active INTEGER NOT NULL); -- hash: Version, Herkunft, Abfragen, Artefakte
+CREATE TABLE matches(query_id TEXT NOT NULL REFERENCES queries, advisory_id TEXT NOT NULL
+  REFERENCES advisories, record_id TEXT NOT NULL, active INTEGER NOT NULL, PRIMARY KEY(query_id, advisory_id, record_id));
+CREATE TABLE match_facts(query_id TEXT NOT NULL, record_id TEXT NOT NULL,
+  record_modified TEXT NOT NULL, fixed TEXT NOT NULL, other_fix TEXT NOT NULL,
+  urgency TEXT NOT NULL, PRIMARY KEY(query_id, record_id));
+-- Fälle und Entscheidungen
+CREATE TABLE cases(id INTEGER PRIMARY KEY,
+  advisory_id TEXT NOT NULL REFERENCES advisories, location_id TEXT NOT NULL REFERENCES locations,
+  state TEXT NOT NULL DEFAULT 'neu', relevance TEXT NOT NULL DEFAULT 'ungeprueft',
+  impact TEXT NOT NULL DEFAULT 'nicht-geprueft', disposition TEXT,
+  priority TEXT, suggested_priority TEXT, owner TEXT, evidence TEXT, due_at TEXT,
+  waiting_reason TEXT, next_review_at TEXT, risk_expires_at TEXT, remediation TEXT, fixed_at TEXT,
+  verification TEXT, verified_by TEXT, verified_at TEXT, checked_at TEXT, closed_at TEXT,
+  needs_review INTEGER NOT NULL DEFAULT 1,
+  advisory_revision INTEGER NOT NULL, location_hash TEXT NOT NULL,  -- Stand, auf den sich das Urteil bezieht
+  updated_at TEXT NOT NULL, UNIQUE(advisory_id, location_id));
+CREATE TABLE events(id INTEGER PRIMARY KEY, case_id INTEGER NOT NULL REFERENCES cases,
+  at TEXT NOT NULL, actor TEXT NOT NULL, reason TEXT NOT NULL, before_json TEXT, after_json TEXT NOT NULL);
+CREATE TRIGGER events_ro_u BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT,'unveraenderlich'); END;
+CREATE TRIGGER events_ro_d BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT,'unveraenderlich'); END;
+CREATE TABLE advisory_reviews(advisory_id TEXT PRIMARY KEY REFERENCES advisories,  -- Urteil ohne Fall
+  revision INTEGER NOT NULL, scope_hash TEXT NOT NULL, disposition TEXT NOT NULL,
+  evidence TEXT NOT NULL, actor TEXT NOT NULL, checked_at TEXT NOT NULL);
+CREATE TABLE case_links(old_case INTEGER, new_case INTEGER, reason TEXT NOT NULL, PRIMARY KEY(old_case, new_case));
+```
+
+Ausgangswarteschlange (Abschnitt 8) und Anmeldehistorie folgen demselben Muster. Woran die
+Regeln hängen:
+
+| Feld | Regel |
+|---|---|
+| `software.origin` | nur `messung` darf einen Fall schließen; eine Anmeldung allein nie |
+| `software.visibility`, `query_id` | nur `public` geht nach außen (4.1, 5.7) |
+| `lane_checks` | Abwesenheit zählt nur bei `erfolg`, neuer als der Fund, Messweg auf der Positivliste (5.7) |
+| `queries.result`, `last_success` | Abschluss per Update nur, wenn **jede** Abfrage des neuen Stands `erfolg` meldet und den Hinweis nicht mehr enthält |
+| `cases.advisory_revision`, `location_hash` | weicht der aktuelle Stand ab: `needs_review = 1`, ein abgeschlossener Fall geht zurück in Prüfung (7.1) |
+| ganze `cases`-Zeile | ihr Fingerabdruck ist der erwartete Stand einer Sammelentscheidung (7.2) |
+| `advisory_reviews.scope_hash` | ein „betrifft uns nicht“ gilt nur für den Bestand der in der Meldung genannten Pakete (7.2) |
+| `system_lifecycle` | `retired` heißt: keine Anmeldung mehr erwartet. Es beendet keinen Fall |
+| `match_facts.record_modified` | Fakten werden neu bestimmt, sobald sich der Quelldatensatz ändert |
+| `events` | speichert nur geänderte Felder; sonst wächst die unveränderliche Historie mit jedem automatischen Neuvorschlag um den ganzen Fall |
+
 ---
 
 ## 4. Quellen: was installiert ist, nicht was in den Nachrichten steht [Pflicht]
@@ -326,6 +412,82 @@ nötig               ≥ unterschiedliche Paketversionen ÷ Ziel-Alter in Stunde
 
 Miss das tatsächliche Alter jedes Paketabgleichs und melde, wenn es das Ziel überschreitet.
 Ein technisch erfolgreicher Lauf sagt nichts darüber, ob alle Pakete drankamen.
+
+### 4.1 Abgleich je Ökosystem
+
+Die Quelle vergleicht nur richtig, wenn Ökosystem-Kennung, Name und Version so ankommen, wie
+sie dort geführt werden. Ein falscher Name erzeugt keinen Fehler, sondern eine **leere
+Antwort**, und die sieht aus wie Entwarnung. Kennungen nach dem
+[OSV-Schema](https://ossf.github.io/osv-schema/) (abgerufen Oktober 2026):
+
+| Ökosystem | Kennung | Name | Version | Woher |
+|---|---|---|---|---|
+| Debian | `Debian:<hauptversion>`, z. B. `Debian:12` | **Quellpaket** | Quellversion vollständig, samt Epoche, falls vorhanden | `dpkg-query -W -f='${db:Status-Status}\t${binary:Package}\t${Version}\t${source:Package}\t${source:Version}\n'`, nur `installed` |
+| Ubuntu | `Ubuntu:<JJ.MM>`, bei LTS Pflicht-Suffix `:LTS`; Pro-Stände `Ubuntu:Pro:<JJ.MM>:LTS` | Quellpaket | wie Debian | LTS aus `VERSION` in `/etc/os-release` |
+| Alpine | `Alpine:v<haupt>.<neben>` | Ursprungspaket (`o:`) | `V:` samt `-rN` | `/lib/apk/db/installed` |
+| npm | `npm` | wie in `package.json`, samt `@scope/` | `version` aus `package.json` | |
+| PyPI | `PyPI` | normalisiert nach PEP 503: `[-_.]+` → `-`, klein | `Version:` aus `METADATA` | |
+| Go | `Go` | Modulpfad; Standardbibliothek `stdlib`, Go-Kommando `toolchain` | Modul wie in der Buildinfo; Go selbst **ohne** Präfix (`go1.22.4` → `1.22.4`) | Buildinfo |
+
+- **Distributionspakete über das Quellpaket abfragen.** Meldungen führen das Quellpaket
+  (`openssl`), installiert ist das Binärpaket (`libssl3`). Geprüft im Oktober 2026: Dieselbe
+  Abfrage mit dem Binärnamen liefert nichts. Den Binärnamen behältst du als Fundort, denn die
+  Maßnahme heißt „Paket X aktualisieren“.
+- **Versionen nicht umbauen.** Die Binärversion kann von der Quellversion abweichen (z. B.
+  `1:1.3.dfsg+really1.3.1-1+b1` gegenüber `1:1.3.dfsg+really1.3.1-1`); gefragt wird mit der
+  Quellversion. Eine Epoche ergänzt oder streicht man nie: Mit einer erfundenen Epoche fand die
+  Abfrage fast nichts mehr. Die einzige Umformung ist das Präfix `go`. Mit ihm lieferte die
+  Abfrage auch längst behobene Meldungen.
+- **Nur Archivpakete unter die Distributionskennung.** Ein Paket aus einer Herstellerquelle kann
+  denselben Namen tragen und wird dann gegen den falschen Stand verglichen. Herkunft über
+  `apt-cache policy <paket>` oder den Maintainer prüfen, sonst Ökosystem „unbekannt“ und
+  nicht abfragen. Alpine-Pakete ohne `o:` (virtuelle Gruppen aus Dockerfiles) ebenso.
+- **Nicht abfragbar heißt Befund, nicht leer:** `(devel)`, `unknown`, ersetzte Module,
+  Entwicklerstände der Go-Version, eine Distribution ohne Adapter.
+- **Ubuntu Pro:** Mit aktivem Pro stammen manche Stände aus dem Pro-Zweig (`+esm` in der
+  Revision); dafür gilt die Pro-Kennung. Prüf an einem bekannten Paket, welche Kennung deine
+  Stände trifft, bevor du gemischte Bestände automatisch abfragst.
+
+**Versionsvergleich je Ökosystem.** Bei der Abfrage vergleicht die Quelle. Wo du selbst
+vergleichst (Tests, Anzeige „Fix verfügbar“), nimm die Regel des Ökosystems, nie Text- oder
+Zahlvergleich (`1.10` > `1.9`):
+
+| Ökosystem | Regel | Beispiele (`<` = älter) | Werkzeug |
+|---|---|---|---|
+| Debian, Ubuntu | `[Epoche:]Upstream[-Revision]`, Epoche zuerst; `~` sortiert vor allem, auch vor dem Ende | `2.0` < `1:1.0`; `1.0~rc1` < `1.0`; `3.0.11-1~deb12u2` < `3.0.11-1` < `3.0.11-1+b1` | `dpkg --compare-versions` |
+| Alpine | `-rN` numerisch; `_rc` vor dem Release | `1.2.3-r9` < `1.2.3-r10`; `1.2.3_rc1-r0` < `1.2.3-r0` | `apk version -t` |
+| npm, Go-Module | SemVer 2.0; Vorabversion vor dem Release | `1.0.0-rc.1` < `1.0.0` | Bibliothek des Ökosystems |
+| PyPI | PEP 440; Epoche `N!`; dev < a/b/rc < Release < post; `1.0` = `1.0.0` | `1.0.dev1` < `1.0a1` < `1.0` < `1.0.post1` | `packaging.version` |
+
+Geschlossen wird trotzdem nie über deinen eigenen Vergleich, sondern über eine frische Abfrage
+für den neuen Stand (7.1). Ein Vergleichsfehler kann dann höchstens die Anzeige verfälschen.
+
+**Fix im eigenen Zweig.** Je Treffer hältst du aus dem Quelldatensatz fest (`match_facts`):
+
+- `fixed`: Fixversionen aus den `affected`-Einträgen, deren `package.ecosystem` **genau** deiner
+  Kennung entspricht und deren Name gleich ist.
+- `other_fix`: Kennungen anderer Zweige mit Fix (anderes Release, Pro-Zweig).
+- `urgency`: Debian `ecosystem_specific.urgency` (z. B. `unimportant`), Ubuntu den Schwere-
+  Eintrag vom Typ `Ubuntu` (`negligible` bis `critical`). Ubuntu nennt in
+  `ecosystem_specific.availability` zusätzlich, ob der Fix ein Abo braucht.
+
+Daraus die Klassen für die Darstellung (Abschnitt 7), in dieser Prüfreihenfolge:
+
+| Klasse | Bedingung |
+|---|---|
+| **kritisch** | KEV, gültiger CVSS ab 9, Herstellerstufe CRITICAL oder Priorität P0 |
+| **Bewertung offen** | noch keine Treffer-Fakten; bleibt sichtbar |
+| **unwichtig** | Distributor stuft als `unimportant` bzw. `negligible` ein |
+| **behebbar** | Fix im eigenen Zweig |
+| **nur Pro** | Fix nur im Pro-Zweig **desselben Releases** |
+| **wartet** | kein Fix im eigenen Zweig; ein Fix in einem anderen Release zählt hier |
+
+Funde ohne Paketbezug (Truststore, Laufzeitrelease) bekommen eine eigene Klasse.
+
+**Ob ein bereitliegendes Update ein Sicherheitsupdate ist**, sagt der Pocket, nicht die
+Versionsnummer: `apt-cache policy <paket>` zeigt `<codename>-security` (ja) oder
+`-updates`, gestaffelte Auslieferung, `-proposed` (nein). Für Container-Images gilt dasselbe
+mit den Release-Notes des Herstellers. Lies erst nach, dann ordne ein, in beide Richtungen.
 
 ---
 
@@ -431,7 +593,7 @@ Der Inventarleser misst, ohne fremden Code auszuführen:
 | Host-Pakete | Paketdatenbank lesen (`dpkg-query`, `apk info` …) mit Quellpaket und Revision |
 | npm in Containern | `package.json` unter `node_modules` lesen, nicht `npm` ausführen |
 | PyPI in Containern | Kopfzeilen der `*.dist-info/METADATA` unter `site-packages` lesen, mit `python3 -I -S`, also ohne `site`, `.pth` und Paketcode |
-| Go-Programme | Buildinformation der **laufenden** Programmdatei (`/proc/<pid>/exe`), Laufzeit und Module |
+| Go-Programme | Buildinformation der **laufenden** Programmdatei (`/proc/<pid>/exe`), Laufzeit und Module; blinder Fleck siehe 5.7 |
 | Container | `docker inspect` der laufenden **und** gestoppten Container: Name, `.Image`, Zustand |
 | eigene Werkzeuge | Prüfsummen der ausgerollten Admin-Skripte gegen den Repo-Stand |
 
@@ -445,6 +607,44 @@ Der Inventarleser misst, ohne fremden Code auszuführen:
 - Die Wache meldet auch ihren **eigenen** Bestand an: Host-Betriebssystem, ihren Code,
   gemeinsame Infrastruktur und externe Dienste (Anbieter, CDN, Push-Dienst), mit
   Herstellerbeleg und Wiedervorlage.
+
+### 5.7 Sammler je Ökosystem und ihre blinden Flecken
+
+Jeder Messweg sieht nur, was seine Methode erreichen kann. Gefährlich wird das erst, wenn eine
+Regel aus dem Fehlen eines Pakets etwas folgert, das der Messweg gar nicht hätte sehen können.
+
+| Messweg | liest | sieht nicht | belegt Abwesenheit? |
+|---|---|---|---|
+| `os` | Paketdatenbank, nur Status `installed` | Software außerhalb des Paketmanagers (kopierte Binärdateien, `/opt`) | ja |
+| `npm` | `package.json` in festen Wurzeln, Symlinks aufgelöst, Wurzeln entdoppelt | Bundles ohne `package.json`, andere Installationswurzeln, Images ohne laufenden Container | ja |
+| `pypi` | Kopfzeilen von `METADATA`/`PKG-INFO` in `site-packages`, mit `python3 -I -S` | vendorte Kopien, Container ohne Python; Distributions-Python gehört zu `os` | ja |
+| `go` | Buildinfo **laufender** Programme | was zur Messzeit nicht läuft: eine Healthcheck-Binärdatei, die die Container-Laufzeit nur kurz startet; ein Werkzeug im Image, das nie gestartet wird | **nein** |
+| `runtime` | `--version` plus Prüfsumme der Binärdatei | eingebettete Bibliotheken | ja |
+
+- **Die Go-Lücke schließen:** zusätzlich das Dateisystem jedes laufenden Images nach
+  ausführbaren Dateien mit Go-Buildinfo durchsuchen (`go version -m <datei>` oder
+  `debug/buildinfo` im eigenen Leser; beides liest nur, nichts wird ausgeführt). Zweiter Weg
+  ist die Image-SBOM aus dem Build (Abschnitt 11). Bevor du sagst „die Wache sieht X“, stell
+  einen fremden Scanner gegen das Image und die Softwaretabelle für denselben Stand nebeneinander.
+- **Abwesenheit gilt nur im eigenen Messweg.** Ein erfolgreicher `os`-Lauf sagt nichts über
+  `npm`. Ein fehlendes Paket belegt eine Entfernung nur, wenn (a) der Messweg auf der
+  Positivliste steht, (b) seine letzte Messung **desselben Systems** `erfolg` meldet und (c) sie
+  **neuer** ist als der Fund. Ein ganz verschwundenes System schließt nichts.
+- **Schließ- und Nachfolgerregeln per Positivliste je Messweg, nie per Ausnahmeliste.** Ein
+  neuer Messweg erbt keine Regel. Nachfolger gibt es nur, wo die Version im Ortsnamen steht
+  (Python `*.dist-info`/`*.egg-info`): Dort zieht jedes Update an einen neuen Ort. Zwei
+  Go-Programme im selben Ordner sind Geschwister, keine Versionen voneinander.
+- **Den ersten Live-Lauf jeder neuen Regel nach Messweg aufschlüsseln** (wie viele Fälle je Weg
+  geschlossen oder umgehängt), bevor sie als richtig gilt. Tests prüfen nur die Fälle, an die
+  jemand gedacht hat.
+- **Sichtbarkeit:** Gemessene Namen sind zunächst `unknown`. Nach außen gehen sie erst, wenn das
+  Projekt sie in seiner Anmeldung freigibt oder die Quelle den Namen schon in einem eigenen
+  Datensatz führt. Ein nur gemessenes, nirgends freigegebenes Paket wird deshalb nicht
+  abgefragt; das ist ein Abdeckungsbefund, keine Entwarnung.
+- **Ersetzte Go-Module** (`replace`): das Original mit Kennzeichen „ersetzt“ behalten (sichtbar,
+  nicht abfragbar), das Ersatzmodul abfragen. Ein Fork belegt nicht, dass die Lücke fehlt.
+- **Leer ist ein Fehler:** eine leere Paketliste, unlesbare Prozessdateien oder ein Go-Prozess
+  ohne eindeutige Container-Zuordnung setzen den Messweg auf `fehler`, nicht auf „nichts da“.
 
 ---
 
@@ -556,6 +756,89 @@ Wiederholungen bleibt. Vollständig geprüft heißt nicht fehlerfrei: Befunde bl
   festhalten. Datenbank-Trigger schützen nicht gegen jemanden mit root; das ist eine Grenze,
   kein Schutz.
 
+### 7.1 Lebenslauf eines Falls
+
+Ein Fall hat einen **Arbeitsstand** (`neu`, `in-pruefung`, `geplant`, `in-bearbeitung`,
+`wartet`, `behoben`, `abgeschlossen`) und zwei fachliche Achsen: **Relevanz** (`ungeprueft`,
+`relevant`, `nicht-relevant`, `unklar`) und **Betroffenheit** (`nicht-geprueft`,
+`potenziell-betroffen`, `betroffen`, `nachweislich-nicht-betroffen`). Zum Abschluss kommt eine
+**Disposition**: `behoben`, `nicht-relevant`, `nicht-betroffen` oder `risiko-akzeptiert`.
+
+Die Regeln prüfen den **Zustand nach der Änderung**, nicht den Weg dorthin. Menschen dürfen
+jeden Arbeitsstand setzen, wenn das Ergebnis die Pflichtangaben trägt. Alle Wege (Einzelbearbeitung,
+Sammelplan, Automatik) laufen durch **dieselbe** Änderungsfunktion:
+
+| Wenn nach der Änderung … | ist Pflicht |
+|---|---|
+| jede Änderung | Akteur und Begründung; nur freigegebene Felder; Zeiten mit Zeitzone, gespeichert in UTC |
+| Relevanz `relevant` oder `nicht-relevant` | Beleg |
+| eine Priorität gesetzt ist | Fälligkeit |
+| Stand `wartet` | Wartegrund und nächste Prüfung |
+| eine Verifikationszeit gesetzt ist | Ergebnis, Prüfer, Prüfzeit |
+| Stand `behoben` | Maßnahme |
+| Stand `abgeschlossen` | Disposition, Prüfzeit, Beleg |
+| … mit Disposition `behoben` | zusätzlich Behebungszeit, Verifikation, Maßnahme |
+| … `nicht-relevant` / `nicht-betroffen` | passende Achse: Relevanz `nicht-relevant` bzw. Betroffenheit `nachweislich-nicht-betroffen` |
+| … `risiko-akzeptiert` | Ablaufdatum und Prüftermin |
+| der Fall trägt `needs_review` (neuer Sachstand) | Abschluss nur mit einer Prüfzeit **aus dieser Änderung**, nicht älter als die letzte Änderung des Falls; bei `behoben` ebenso eine frische Verifikation |
+
+- **Was der Dienst setzt, ist nicht editierbar:** Vorschläge, `needs_review`, Meldungsrevision,
+  Fundort-Hash, Anlagezeit. Sonst ließe sich der Prüfbedarf wegklicken.
+- **Zeitstempel setzt die Funktion:** Beginn bei `in-bearbeitung`, Behebung bei `behoben`,
+  `closed_at` nur solange `abgeschlossen`. `needs_review` fällt nur durch eine Prüfung, die
+  neuer ist als der letzte Stand des Falls.
+- **Der Dienst selbst darf nur vier Dinge:** Fälle anlegen und neu vorschlagen; wieder öffnen;
+  an einen Nachfolger-Fundort umhängen (mit Verweis); gemessen abschließen. Wieder geöffnet wird bei neuer Meldungsrevision, neuem Fundort-Hash,
+  abgelaufenem Prüftermin oder abgelaufener Risikoakzeptanz: `needs_review = 1`, aus
+  `abgeschlossen` wird `in-pruefung`. Bestätigt die Quelle einen Treffer nicht mehr, wird der
+  Fall zur Prüfung vorgelegt, **nicht** geschlossen.
+- **Gemessener Abschluss** (Belegarten in Abschnitt 7 und 5.7) in zwei Schritten durch dieselbe
+  Funktion: erst `behoben` mit Maßnahme („jetzt Version X gemessen“), dann `abgeschlossen` mit
+  Verifikation („Abfrage für X am … ohne den Hinweis“). Den Zeitstempel des zweiten Schritts
+  erst **nach** dem ersten erzeugen, sonst liegt er bei einem Sekundenwechsel vor dessen
+  Änderungszeit und die Regel „neuer Sachstand“ lehnt jeden Abschluss ab. Jeden Fall in einem
+  eigenen Savepoint: Ein abgelehnter Abschluss rollt nur diesen Fall zurück, nicht den Lauf.
+
+**Priorisierungsvorschlag**, ein Beispiel für eine nachvollziehbare Regel. Zurückgezogene
+Datensätze zählen nicht, und eine Schwere, die im Datensatz einem anderen Paket gilt, auch nicht:
+
+```
+P0  KEV und Exposition "internet"
+P1  KEV; gültiger CVSS ab 7; Herstellerstufe HIGH/CRITICAL; kritisches System mit CVSS ab 4 oder ohne Schwere
+P3  gültiger CVSS unter 4 auf einem nicht kritischen System
+P2  alles andere, auch fehlende Schwere
+```
+
+### 7.2 Sammelentscheidungen
+
+Viele Fälle teilen dieselbe Entscheidung, etwa „nicht relevant, Komponente nur im Build“. Ein
+Filter („alle Fälle mit Paket X schließen“) trifft auch Fälle, die seit der Durchsicht neu oder
+anders geworden sind. Deshalb nennt ein Sammelplan jede Entscheidung einzeln, mit dem Stand, den
+der Prüfer gesehen hat:
+
+```json
+[{"kind": "case", "id": 4711, "expected_hash": "<sha256 der Fallzeile>",
+  "reason": "<warum>", "changes": {"relevance": "nicht-relevant", "evidence": "<Beleg>",
+  "checked_at": "<UTC-Zeitpunkt>", "state": "abgeschlossen", "disposition": "nicht-relevant"}},
+ {"kind": "advisory", "id": "<meldung>", "revision": 3, "inventory_hash": "<sha256>",
+  "disposition": "nicht-relevant", "evidence": "<Beleg>", "reason": "<warum>"}]
+```
+
+- **Fall:** Der erwartete Stand ist der Fingerabdruck der **ganzen** Fallzeile (SHA-256 über
+  kanonisches JSON mit sortierten Schlüsseln). Jede Änderung, auch eine Notiz, ändert ihn.
+- **Neue manuelle Zuordnung** (Fall anlegen): erwartete Meldungsrevision und Fundort-Hash;
+  besteht der Fall schon, ist das ein Fehler.
+- **Meldung ohne Fall** („betrifft unseren Bestand nicht“): erwartete Revision und Bestands-
+  Fingerabdruck; nur `nicht-relevant` oder `informativ`, immer mit Beleg. Hat die Meldung aktive
+  Fälle, wird abgelehnt: Die gehören einzeln bewertet. Gespeichert wird der Fingerabdruck über den
+  Bestand **der in der Meldung genannten Pakete** samt Abdeckungsgrenzen. Ändert er sich, legt
+  die Wache das Urteil erneut vor; eine fremde Paketversion allein tut das nicht.
+- **Alles oder nichts:** eigene Transaktion (`BEGIN IMMEDIATE`, nicht verschachtelt); jede
+  Entscheidung durch die Änderungsfunktion aus 7.1; doppelte Einträge sind ein Fehler. **Ein
+  einziger veralteter oder ungültiger Eintrag verwirft den ganzen Plan.**
+- **Der Probelauf ist der echte Lauf mit Rollback am Ende.** So findet er genau die Fehler, die
+  der echte Lauf hätte, und hinterlässt nichts.
+
 ---
 
 ## 8. Benachrichtigen, ohne abzustumpfen [Pflicht]
@@ -613,6 +896,45 @@ wo das zuständige Projekt ohnehin hinsieht.
 **Auf der Seite des Projekts:** Den Eintrag zu Beginn einer Arbeitssitzung lesen, Fälle mit
 Beleg bearbeiten, nach jedem Deploy, der Systembestandteile ändert (Lockfiles, Basisimage,
 Laufzeit, CI-Komponenten, Truststores), neu anmelden und das im Antwortschlitz vermerken.
+
+### 9.1 Den verwalteten Eintrag ersetzen
+
+Der Lauf schreibt in eine Datei, in die auch Menschen schreiben. Was er dort verliert, ist weg:
+eine Rückmeldung, oder eine Nummer, auf die schon jemand verweist.
+
+```python
+BEGIN, END = '<!-- WACHE:BEGIN -->', '<!-- WACHE:END -->'
+NUMMER = re.compile(r'^(#{2,3} [^A-Za-z*]*(\*\*)?|- \[[ x]\] [^A-Za-z*]*\*\*)<PRÄFIX>([0-9]+)', re.M)
+
+def naechste_nummer(text):                           # beide Eintragsformen zählen
+    return max((int(m[3]) for m in NUMMER.finditer(text)), default=0) + 1
+
+def merge(text, projekt, stand):
+    if BEGIN in text and END in text:                # ersetzen
+        a, e = text.index(BEGIN), text.index(END) + len(END)
+        alt = text[a:e].split('\n')
+        i = next((k for k, z in enumerate(alt) if z.lstrip().startswith('- 💬')), None)
+        schlitze = [z for z in alt[i:] if z != END] if i is not None else None  # wörtlich
+        nr = alte_nummer(alt) or naechste_nummer(text)
+        return text[:a] + render(nr, projekt, stand, schlitze) + text[e:]
+    if not offen(projekt): return text               # nichts offen: keinen Eintrag anlegen
+    return einfuegen(text, render(naechste_nummer(text), projekt, stand, None))  # feste Stelle
+```
+
+- **Nummer:** aus dem alten Block übernehmen. Nur ein neuer Eintrag bekommt die höchste
+  vergebene Nummer + 1, gezählt über **beide** Eintragsformen (Überschrift `### <Präfix>12 …`
+  und Listeneintrag `- [ ] 🟡 **<Präfix>12**`). Wandert Erledigtes in ein Archiv, zählt das
+  Archiv mit. Eine Nummer wird nie neu vergeben.
+- **Rückmeldeschlitze:** alles ab der ersten Rückmeldezeile bis zur Endmarkierung bleibt
+  wörtlich stehen; neu erzeugt wird nur der Teil darüber.
+- **Abhaken nur per Messung:** offen heißt kritischer Fall, Maßnahme mit Fix, Registerbefund
+  oder System ohne Owner. Kleinvieh allein ist kein Auftrag. Ist nichts offen, wird der Block
+  abgehakt (`- [x] 🟢`, Datum), bei Neuem wieder geöffnet, nie wegen eines Antworttexts.
+- **Farbe nach Wirkung:** rot nur mit KEV oder einem kritischen Fall an einem von außen
+  erreichbaren System; kritisch ohne Zugang von außen orange; nur Maßnahmen oder Registerbefunde gelb.
+- **Nichts fällt still heraus:** Ein System ohne Owner (auch ein Container ohne
+  Projektkennzeichen) landet beim Betreiber der Wache mit „Zuordnung klären“, nicht stumm unter
+  dem Hostbetreiber. Die Systemliste wird nicht gekürzt, sonst steht das letzte System nirgends.
 
 ---
 
@@ -686,6 +1008,26 @@ Aufräumfunktionen sind gegen Testlauf und Testkonfiguration doppelt gesperrt.
 14. **Kapazität:** Abfragen je Stunde reichen für alle Paketversionen im Ziel-Alter.
 15. **Ende-zu-Ende:** eine echte Meldung von der Quelle über Fundort, Fall, Nachricht und
     Projekteintrag bis zum belegten Abschluss, bei ausgeschaltetem Arbeitsrechner.
+16. **Zustandsregeln:** Abschluss ohne Disposition, Prüfzeit oder Beleg wird abgelehnt, ebenso
+    `behoben` ohne Maßnahme, `wartet` ohne Grund und nächste Prüfung, Priorität ohne
+    Fälligkeit. Ein Fall mit `needs_review` lässt sich nur mit einer neuen Prüfung schließen;
+    ein Versuch, `needs_review` direkt zu setzen, wird abgelehnt.
+17. **Sammelplan:** Ein veralteter Fingerabdruck unter vielen gültigen verwirft den ganzen Plan,
+    es entsteht kein einziges Ereignis. Nach dem Probelauf sind Fälle und Ereignisse unverändert.
+18. **Versionsvergleich:** die Beispiele aus 4.1 (Debian mit Epoche, `~` und Revision, Alpine
+    `-rN`, PEP 440) gegen `dpkg --compare-versions` bzw. `apk version -t` als Referenz.
+19. **Ökosystem-Zuordnung:** Ein installiertes Binärpaket wird als Quellpaket mit
+    Quellversion abgefragt, die Go-Version ohne `go`, ein Ubuntu-LTS mit `:LTS`; ein
+    Alpine-Paket ohne `o:` geht gar nicht nach außen.
+20. **Go-Programm im Image, das nicht läuft,** wird über die Dateisuche trotzdem gemessen. Und ein
+    Go-Programm, das zur Messzeit nicht läuft, schließt keinen Fall.
+21. **Nachfolger:** Ein Wechsel `<paket>-1.0.dist-info` → `<paket>-1.1.dist-info` schließt per
+    Messung; zwei Go-Programme im selben Ordner gelten nicht als Nachfolger.
+22. **Teilabwesenheit:** `os` erfolgreich, `npm` gescheitert → kein npm-Fall wird geschlossen.
+23. **Projekteintrag:** Ersetzen behält Nummer und Rückmeldetext byteweise; die neue Nummer ist
+    das Maximum aus beiden Eintragsformen + 1; ohne Offenes entsteht kein neuer Eintrag.
+24. **Gemessener Abschluss über einen Sekundenwechsel** (Uhr im Test zwischen den Schritten
+    weiterstellen) gelingt; ein abgelehnter Abschluss bricht den Lauf nicht ab.
 
 Der Bericht nennt den Weg, nicht nur das Ergebnis: welche Probe, auf welchem System, mit
 welchem Ausgang. Was nicht geprüft wurde, steht als ungeprüft da.
@@ -708,6 +1050,19 @@ welchem Ausgang. Was nicht geprüft wurde, steht als ungeprüft da.
   Lebenszeichen in beide Richtungen fangen das.
 - **„State of the Art“ ist kein Produktetikett.** Es muss durch Abdeckung, Bearbeitung und
   Nachweise im eigenen Betrieb getragen werden.
+- **Binärname statt Quellpaket** liefert eine leere Antwort, die wie Entwarnung aussieht. Ebenso
+  eine erfundene Epoche; ein vergessenes `go`-Präfix liefert umgekehrt längst Behobenes.
+- **Abwesenheit aus einem prozessbasierten Messweg ist kein Entfernungsbeleg.** Ein Programm,
+  das gerade nicht läuft, ist nicht deinstalliert.
+- **Nachbarschaft ist keine Nachfolge.** Eine Regel, die für einen Messweg stimmt, wird auf den
+  nächsten übertragen und schließt dort falsch. Darum Positivliste und Aufschlüsselung des
+  ersten Live-Laufs.
+- **„Fix anderswo“ ohne Releasebezug:** Ein Fix im Pro-Zweig eines anderen Releases macht aus
+  „wartet“ kein „nur Pro“. Vergleiche die vollständige Kennung, nicht ein Teilwort.
+- **Ein großer Plan, eine veraltete Zeile:** Wer bei einem Fehler „den Rest trotzdem“ anwendet,
+  hat wieder einen Filter gebaut.
+- **Ein stillgelegtes System** löst weiter „Anmeldung fehlt“ aus, wenn nur eine von mehreren
+  Prüfungen den Lebenslauf kennt. Lies `system_lifecycle` an jeder Stelle, die Anmeldungen erwartet.
 
 ---
 
@@ -715,13 +1070,17 @@ welchem Ausgang. Was nicht geprüft wurde, steht als ungeprüft da.
 
 1. Rolle und Grenzen mit dem Nutzer klären (Abschnitt 0).
 2. Ressourcen messen, Herstellerangaben mit Datum nachschlagen, Entscheidung festhalten (2).
-3. Benutzer, Verzeichnisse, Units mit Grenzen anlegen; erst Probelauf ohne Benachrichtigung (3).
-4. Quellen anbinden; jede mit einer bekannten aktuellen Meldung gegenprüfen (4).
-5. Inventarleser mit festen Befehlen; Anmeldevertrag und Annehmer; eigenen Bestand anmelden (5).
+3. Benutzer, Verzeichnisse, Units mit Grenzen anlegen, Schema nach 3.6; erst Probelauf ohne
+   Benachrichtigung (3).
+4. Quellen anbinden; Ökosystem-Kennungen je Distribution festlegen; jede Quelle mit einer
+   bekannten aktuellen Meldung gegenprüfen, je Ökosystem mit einem bekannten Paket (4, 4.1).
+5. Inventarleser mit festen Befehlen je Messweg, blinde Flecken notieren, Go-Dateisuche;
+   Anmeldevertrag und Annehmer; eigenen Bestand anmelden (5, 5.7).
 6. Projekte binden die Anmeldung in ihren Releaseweg ein; Frist festlegen (5.5).
 7. Zweiter Server: Lesezugang, Gegenkontrolle, wöchentliche Zweitprüfung (6).
-8. Fallmodell, Abschlussregeln, Benachrichtigung; Push-Kontingent nachrechnen (7, 8).
-9. Wöchentlicher Rückkanal in die Projekte (9).
+8. Fallmodell mit Pflichtangaben je Zustand, Sammelpläne, Abschlussregeln, Benachrichtigung;
+   Push-Kontingent nachrechnen (7, 7.1, 7.2, 8).
+9. Wöchentlicher Rückkanal in die Projekte, Ersetzen mit Nummer und Schlitzen (9, 9.1).
 10. Sicherung, Restore-Übung, Rückweg, gepinnte Lieferkette (10).
 11. Abnahmeproben aus Abschnitt 12 als dauerhafte Tests; Grenzen nach einer Woche
     Normalbetrieb erneut messen.
@@ -744,3 +1103,9 @@ welchem Ausgang. Was nicht geprüft wurde, steht als ungeprüft da.
 | **Oneshot** | systemd-Dienst, der startet, seine Arbeit tut und endet |
 | **ForcedCommand** | SSH-Schlüssel, der unabhängig vom Aufruf nur ein festes Programm starten darf |
 | **Seitencache** | vom Kernel zwischengespeicherte Dateiinhalte; zählt in die Speicherspitze einer Unit mit |
+| **Quellpaket** | Paket, aus dem die Distribution ihre Binärpakete baut; Meldungen von Debian, Ubuntu und Alpine beziehen sich darauf |
+| **Ökosystem-Kennung** | Zeichenkette, unter der die Quelle Pakete eines Ökosystems bzw. Distributionszweigs führt, z. B. `Debian:12` |
+| **Pocket** | Teilbereich des Ubuntu-Archivs (`-security`, `-updates`, `-proposed`; bei Debian „Suite“), aus dem ein Paketstand kommt |
+| **Messweg** | eine Messmethode mit eigenem Status (`os`, `npm`, `pypi`, `go`, `runtime`) |
+| **Fingerabdruck** | SHA-256 über die kanonische Form eines Datensatzes; belegt, welchen Stand ein Prüfer gesehen hat |
+| **Disposition** | Art des Abschlusses: behoben, nicht relevant, nicht betroffen, Risiko akzeptiert |
